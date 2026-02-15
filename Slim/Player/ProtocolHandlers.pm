@@ -26,7 +26,7 @@ my %protocolHandlers = (
 	spdr     => qw(Slim::Player::Protocols::SqueezePlayDirect),
 	http     => qw(Slim::Player::Protocols::HTTP),
 	https    => qw(Slim::Player::Protocols::HTTPS),
-	icy      => qw(Slim::Player::Protocols::HTTP),	
+	icy      => qw(Slim::Player::Protocols::HTTP),
 	playlist => 0,
 	db       => 1,
 );
@@ -155,15 +155,8 @@ sub iconForURL {
 		return 'html/images/playlists.png';
 	}
 
-	elsif ($url =~ /^db:album\.(\w+)=(.+)/) {
-		my $value = Slim::Utils::Misc::unescape($2);
-
-		if (utf8::is_utf8($value)) {
-			utf8::decode($value);
-			utf8::encode($value);
-		}
-
-		my $album = Slim::Schema->search('Album', { $1 => $value })->first;
+	elsif ($url =~ /^db:(album\..*)/) {
+		my $album = Slim::Schema->objectForUrl($url);
 
 		if ($album && $album->artwork) {
 			return 'music/' . $album->artwork . '/cover.png';

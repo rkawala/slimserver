@@ -341,7 +341,6 @@ sub getNextSong {
 # Some 'native' formats are streamed with a different format to their container
 my %streamFormatMap = (
 	wav => 'pcm',
-	mp4 => 'aac',
 );
 
 sub open {
@@ -362,6 +361,14 @@ sub open {
 	main::INFOLOG && $log->info($url);
 
 	$self->seekdata($seekdata) if $seekdata;
+
+	# last chance to get the byte offset if not already provided	
+	if ($self->seekdata && $self->seekdata->{'timeOffset'} && !$self->seekdata->{'sourceStreamOffset'}) {  
+		my $seekdata = $self->getSeekData($self->seekdata->{'timeOffset'});
+		$self->seekdata($seekdata) if $seekdata;
+		main::INFOLOG && $log->info("Adding seekdata ", Data::Dump::dump($self->seekdata));
+	}	
+
 	my $sock;
 	my $format = Slim::Music::Info::contentType($track);
 
@@ -426,10 +433,9 @@ sub open {
 	} else {
 		require Slim::Player::CapabilitiesHelper;
 
-		# Set the correct format for WAV/AAC playback
-		if ( exists $streamFormatMap{$format} ) {
-			$format = $streamFormatMap{$format};
-		}
+		# Set the correct format for WAV playback
+		$self->wantFormat($format);
+		$format = $streamFormatMap{$format} || $format;
 
 		# Is format supported by all players?
 		if (!grep {$_ eq $format} Slim::Player::CapabilitiesHelper::supportedFormats($client)) {

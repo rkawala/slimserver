@@ -98,7 +98,7 @@ $os->migratePrefsFolder($path);
 my $prefs = preferences('server');
 
 # File paths need to be prepared in order to correctly read the file system
-$prefs->setFilepaths(qw(mediadirs ignoreInAudioScan ignoreInVideoScan ignoreInImageScan playlistdir cachedir librarycachedir coverArt));
+$prefs->setFilepaths(qw(mediadirs ignoreInAudioScan playlistdir cachedir librarycachedir coverArt));
 
 
 =head2 preferences( $namespace )
@@ -191,14 +191,10 @@ sub init {
 		'ratingImplementation'  => 'LOCAL_RATING_STORAGE',
 		# Server Settings - FileTypes
 		'disabledextensionsaudio'    => '',
-		'disabledextensionsvideo'    => '',
-		'disabledextensionsimages'   => '',
 		'disabledextensionsplaylist' => '',
 		'prioritizeNative'      => 1,
 		'disabledformats'       => [],
 		'ignoreInAudioScan'     => [],
-		'ignoreInVideoScan'     => [],
-		'ignoreInImageScan'     => [],
 		# Server Settings - Networking
 		'webproxy'              => \&Slim::Utils::OSDetect::getProxy,
 		'httpport'              => 9000,
@@ -387,7 +383,7 @@ sub init {
 
 			return 1;
 		}
-	}, 'mediadirs', 'ignoreInAudioScan', 'ignoreInVideoScan', 'ignoreInImageScan');
+	}, 'mediadirs', 'ignoreInAudioScan');
 
 	# set on change functions
 	$prefs->setChange( \&Slim::Web::HTTP::adjustHTTPPort, 'httpport' );
@@ -423,8 +419,15 @@ sub init {
 	}, 'autoDownloadUpdate', 'checkVersion' );
 
 	if ( !main::SCANNER ) {
+		my $scanArtwork = sub {
+			Slim::Music::Import->setIsScanning('PRECACHEARTWORK_PROGRESS');
+			Slim::Music::Artwork->precacheAllArtwork(sub {
+				Slim::Music::Import->setIsScanning(0);
+			}, 1);
+		};
+
 		$prefs->setChange( sub {
-			return if Slim::Music::Import->stillScanning;
+			return if !Slim::Schema->hasLibrary || Slim::Music::Import->stillScanning;
 
 			my $newValues = $_[1];
 			my $oldValues = $_[3];
@@ -436,11 +439,9 @@ sub init {
 			# trigger artwork scan if we've got a new specification only
 			if ( scalar @new ) {
 				require Slim::Music::Artwork;
-
-				Slim::Music::Import->setIsScanning('PRECACHEARTWORK_PROGRESS');
-				Slim::Music::Artwork->precacheAllArtwork(sub {
-					Slim::Music::Import->setIsScanning(0);
-				}, 1);
+				Slim::Utils::Timers::killTimers(undef, $scanArtwork);
+				# delay rescan in case we were still busy getting everything set up
+				Slim::Utils::Timers::setTimer(undef, Time::HiRes::time() + 10, $scanArtwork);
 			}
 		}, 'customArtSpecs');
 
@@ -509,7 +510,7 @@ sub init {
 					Slim::Control::Request::executeRequest( undef, [ 'rescan', 'full', Slim::Utils::Misc::fileURLFromPath($_) ] );
 				}
 			}
-		}, 'ignoreInAudioScan', 'ignoreInVideoScan', 'ignoreInImageScan');
+		}, 'ignoreInAudioScan');
 
 		$prefs->setChange( sub {
 			require Slim::Music::PlaylistFolderScan;
@@ -708,47 +709,21 @@ sub defaultMediaDirs {
 	if ($audiodir) {
 		# set mediadirs to the former audiodir
 		push @mediaDirs, $audiodir;
-
-		# add the audiodir to the list of sources to be ignored by the other scans
-		defaultMediaIgnoreFolders('music', $audiodir);
 	}
 
-	# new LMS installation: default to all media folders
+	# new LMS installation: default to music folder
 	else {
-		# try to find the OS specific default folders for various media types
-		foreach my $medium ('music', 'videos', 'pictures') {
-			my $path = Slim::Utils::OSDetect::dirsFor($medium);
+		# try to find the OS specific default folder
+		my $path = Slim::Utils::OSDetect::dirsFor('music');
 
-			main::DEBUGLOG && $log && $log->debug("Setting default path for medium '$medium' to '$path' if available.");
+		main::DEBUGLOG && $log && $log->debug("Setting default path for medium 'music' to '$path' if available.");
 
-			if ($path && -d $path) {
-				push @mediaDirs, $path;
-
-				# ignore media from other media's scan
-				defaultMediaIgnoreFolders($medium, $path);
-			}
+		if ($path && -d $path) {
+			push @mediaDirs, $path;
 		}
 	}
 
 	return \@mediaDirs;
-}
-
-# when using default folders for a given media type, exclude it from other media's scans
-sub defaultMediaIgnoreFolders {
-	my ($type, $dir) = @_;
-
-	my %ignoreDirs = (
-		music    => ['ignoreInVideoScan', 'ignoreInImageScan'],
-		videos   => ['ignoreInAudioScan', 'ignoreInImageScan'],
-		pictures => ['ignoreInVideoScan', 'ignoreInAudioScan'],
-	);
-
-	foreach ( @{ $ignoreDirs{$type} } ) {
-		my $ignoreDirs = $prefs->get($_) || [];
-
-		push @$ignoreDirs, $dir;
-		$prefs->set($_, $ignoreDirs);
-	}
 }
 
 sub defaultPlaylistDir {
